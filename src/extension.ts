@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
-import { parseFile } from './parser';
+import { parseDartFile } from './parser';
+import { normalizeDartParse } from './normalizer';
+import { showGraphPanel } from './webview/panel';
 
 export function activate(context: vscode.ExtensionContext) {
 
@@ -45,9 +47,15 @@ export function activate(context: vscode.ExtensionContext) {
         watcher.onDidChange((uri) => {
             console.log('🟡 watcher.onDidChange:', uri.scheme, uri.fsPath);
 
+            if (!uri.fsPath.endsWith('.dart')) {
+                return;
+            }
+
             try {
-                const data = parseFile(uri.fsPath);
+                const data = parseDartFile(uri.fsPath, context.extensionPath);
+                const graph = normalizeDartParse(data);
                 console.log('DATA:', JSON.stringify(data, null, 2));
+                showGraphPanel(context, graph);
             } catch (err) {
                 console.log('❌ Parse error:', err);
             }

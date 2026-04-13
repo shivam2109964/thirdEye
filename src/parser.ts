@@ -1,55 +1,30 @@
-import fs from 'fs';
-import { parse } from '@babel/parser';
-import traverse from '@babel/traverse';
+import path from 'path';
+import { execFileSync } from 'child_process';
 
-export function parseFile(filePath: string) {
+export type DartClass = {
+    name: string;
+    methods: string[];
+    fields: string[];
+};
 
-    const code = fs.readFileSync(filePath, 'utf-8');
+export type DartParseResult = {
+    file: string;
+    classes: DartClass[];
+    functions: string[];
+    variables: string[];
+    imports: string[];
+    calls: Array<{ from: string; to: string }>;
+    // Extra metadata emitted by the Dart parser (safe to ignore by consumers)
+    variableScopes?: Array<{ name: string; parent: string; kind: string }>;
+};
 
-    const ast = parse(code, {
-        sourceType: 'module',
-        plugins: ['typescript']
+export function parseDartFile(filePath: string, extensionRootPath: string): DartParseResult {
+    const scriptPath = path.join(extensionRootPath, 'parser.dart');
+
+    const output = execFileSync('dart', [scriptPath, filePath], {
+        encoding: 'utf8',
+        maxBuffer: 10 * 1024 * 1024,
     });
 
-    const result = {
-        functions: [] as string[],
-        imports: [] as string[],
-        edges: [] as { from: string; to: string }[]
-    };
-
-    let currentFunction: string | null = null;
-
-    traverse(ast, {
-
-        FunctionDeclaration(path) {
-            if (path.node.id) {
-                const name = path.node.id.name;
-                result.functions.push(name);
-
-                currentFunction = name;
-
-                path.traverse({
-                    CallExpression(innerPath) {
-                        const callee = innerPath.node.callee;
-
-                        if (callee.type === 'Identifier' && currentFunction) {
-                            result.edges.push({
-                                from: currentFunction,
-                                to: callee.name
-                            });
-                        }
-                    }
-                });
-
-                currentFunction = null;
-            }
-        },
-
-        ImportDeclaration(path) {
-            result.imports.push(path.node.source.value);
-        }
-
-    });
-
-    return result;
+    return JSON.parse(output) as DartParseResult;
 }
