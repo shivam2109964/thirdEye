@@ -1,7 +1,9 @@
 import * as vscode from 'vscode';
-import { parseDartFile } from './parser';
-import { normalizeDartParse } from './normalizer';
-import { showGraphPanel } from './webview/panel';
+import { disposeDartParseService, parseDartFile } from './parser';
+import { buildExecutionTreeView } from './executionTree';
+import { showExecutionTreePanel } from './webview/panel';
+
+const PARSE_DEBOUNCE_MS = 250;
 
 export function activate(context: vscode.ExtensionContext) {
 
@@ -22,7 +24,42 @@ export function activate(context: vscode.ExtensionContext) {
     console.log('Watcher created');
     console.log('⏳ ThirdEye: waiting for file changes (next .dart change will log loading → done)…');
 
+    const debounceTimers = new Map<string, NodeJS.Timeout>();
+
+    async function runParseGraph(dartPath: string): Promise<void> {
+        console.log('⏳ ThirdEye: loading (read + parse + graph)…', dartPath);
+        try {
+            const data = await parseDartFile(dartPath, context.extensionPath);
+            const tree = buildExecutionTreeView(data);
+            showExecutionTreePanel(context, tree);
+            console.log('✅ ThirdEye: loading finished — execution tree panel updated');
+        } catch (err) {
+            console.log('❌ ThirdEye: loading failed — parse error:', err);
+        }
+    }
+
+    function scheduleParse(dartPath: string): void {
+        const prev = debounceTimers.get(dartPath);
+        if (prev) {
+            clearTimeout(prev);
+        }
+        debounceTimers.set(
+            dartPath,
+            setTimeout(() => {
+                debounceTimers.delete(dartPath);
+                void runParseGraph(dartPath);
+            }, PARSE_DEBOUNCE_MS),
+        );
+    }
+
     context.subscriptions.push(
+        { dispose: () => {
+            for (const t of debounceTimers.values()) {
+                clearTimeout(t);
+            }
+            debounceTimers.clear();
+            disposeDartParseService();
+        } },
         watcher,
         vscode.workspace.onDidCreateFiles((e) => {
             for (const f of e.files) {
@@ -52,16 +89,7 @@ export function activate(context: vscode.ExtensionContext) {
                 return;
             }
 
-            console.log('⏳ ThirdEye: loading (read + parse + graph)…', uri.fsPath);
-            try {
-                const data = parseDartFile(uri.fsPath, context.extensionPath);
-                const graph = normalizeDartParse(data);
-                console.log('DATA:', JSON.stringify(data, null, 2));
-                showGraphPanel(context, graph);
-                console.log('✅ ThirdEye: loading finished — graph panel updated');
-            } catch (err) {
-                console.log('❌ ThirdEye: loading failed — parse error:', err);
-            }
+            scheduleParse(uri.fsPath);
         }),
         watcher.onDidDelete((uri) => {
             console.log('🔴 watcher.onDidDelete:', uri.scheme, uri.fsPath);
@@ -69,4 +97,6 @@ export function activate(context: vscode.ExtensionContext) {
     );
 }
 
-export function deactivate() { }
+export function deactivate() {
+    disposeDartParseService();
+}

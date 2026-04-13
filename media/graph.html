@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';" />
+    <title>ThirdEye Execution Tree</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            padding: 16px;
+            background: #0f172a;
+            color: #e2e8f0;
+            font-family: system-ui, sans-serif;
+            font-size: 13px;
+            line-height: 1.45;
+        }
+        h1 {
+            margin: 0 0 12px;
+            font-size: 15px;
+            font-weight: 600;
+            color: #f8fafc;
+        }
+        .meta {
+            color: #94a3b8;
+            margin-bottom: 16px;
+            font-size: 12px;
+        }
+        .tree {
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 12px;
+            background: #1e293b;
+            overflow: auto;
+            max-height: calc(100vh - 120px);
+        }
+        ul {
+            list-style: none;
+            margin: 0;
+            padding-left: 0;
+        }
+        ul ul {
+            margin-top: 6px;
+            padding-left: 18px;
+            border-left: 1px solid #475569;
+        }
+        li {
+            margin: 4px 0;
+        }
+        .call {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 6px;
+            background: #334155;
+            border: 1px solid #475569;
+            color: #f1f5f9;
+        }
+        .args {
+            color: #94a3b8;
+            font-size: 11px;
+            margin-left: 6px;
+        }
+        .symbols {
+            margin-top: 16px;
+            padding-top: 12px;
+            border-top: 1px solid #334155;
+            font-size: 11px;
+            color: #94a3b8;
+        }
+        .symbols summary {
+            cursor: pointer;
+            color: #cbd5e1;
+            margin-bottom: 6px;
+        }
+        .pill {
+            display: inline-block;
+            margin: 2px 4px 2px 0;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: #0f172a;
+            border: 1px solid #475569;
+        }
+        .empty {
+            color: #94a3b8;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <h1>Execution tree</h1>
+    <div id="entryLine" class="meta"></div>
+    <div id="treeRoot" class="tree"></div>
+    <div id="symbolsBlock" class="symbols" hidden></div>
+
+    <script>
+        window.addEventListener('message', function (event) {
+            render(event.data);
+        });
+
+        function render(payload) {
+            var entryEl = document.getElementById('entryLine');
+            var treeRoot = document.getElementById('treeRoot');
+            var symBlock = document.getElementById('symbolsBlock');
+
+            if (!payload || typeof payload !== 'object') {
+                entryEl.textContent = '';
+                treeRoot.innerHTML = '<p class="empty">No data.</p>';
+                symBlock.hidden = true;
+                return;
+            }
+
+            entryEl.textContent = payload.entry
+                ? 'Entry: ' + payload.entry
+                : 'No entry function found.';
+
+            if (!payload.root) {
+                treeRoot.innerHTML = '<p class="empty">No call tree to show.</p>';
+            } else {
+                treeRoot.innerHTML = '';
+                var wrap = document.createElement('ul');
+                wrap.appendChild(renderNode(payload.root));
+                treeRoot.appendChild(wrap);
+            }
+
+            if (payload.symbols) {
+                symBlock.hidden = false;
+                symBlock.innerHTML =
+                    '<details open><summary>Symbols</summary>' +
+                    section('Files', payload.symbols.files) +
+                    section('Classes', payload.symbols.classes) +
+                    section('Functions', payload.symbols.functions) +
+                    section('Variables', payload.symbols.variables) +
+                    '</details>';
+            } else {
+                symBlock.hidden = true;
+            }
+        }
+
+        function section(title, items) {
+            if (!items || !items.length) {
+                return '<div><strong>' + escapeHtml(title) + ':</strong> —</div>';
+            }
+            var chips = items
+                .map(function (x) {
+                    return '<span class="pill">' + escapeHtml(String(x)) + '</span>';
+                })
+                .join('');
+            return '<div style="margin:6px 0;"><strong>' + escapeHtml(title) + ':</strong> ' + chips + '</div>';
+        }
+
+        function escapeHtml(s) {
+            return s
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
+        function formatArgs(args) {
+            if (!args || !args.length) {
+                return '';
+            }
+            return args
+                .map(function (a) {
+                    return a.param + '=' + a.value;
+                })
+                .join(', ');
+        }
+
+        function renderNode(node) {
+            var li = document.createElement('li');
+
+            var span = document.createElement('span');
+            span.className = 'call';
+            span.textContent = node.functionName;
+
+            var argStr = formatArgs(node.args);
+            if (argStr) {
+                var small = document.createElement('span');
+                small.className = 'args';
+                small.textContent = '(' + argStr + ')';
+                li.appendChild(span);
+                li.appendChild(small);
+            } else {
+                li.appendChild(span);
+            }
+
+            if (node.returnValue) {
+                var ret = document.createElement('span');
+                ret.className = 'args';
+                ret.textContent = ' → ' + node.returnValue;
+                li.appendChild(ret);
+            }
+
+            if (node.children && node.children.length) {
+                var sub = document.createElement('ul');
+                for (var i = 0; i < node.children.length; i++) {
+                    sub.appendChild(renderNode(node.children[i]));
+                }
+                li.appendChild(sub);
+            }
+
+            return li;
+        }
+    </script>
+</body>
+</html>

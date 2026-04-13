@@ -36,36 +36,47 @@ class _VariableScope {
       };
 }
 
-class _CallEdge {
-  _CallEdge({required this.from, required this.to});
+class _CallSite {
+  _CallSite({
+    required this.from,
+    required this.to,
+    required this.args,
+  });
   final String from;
   final String to;
+  final List<Map<String, String>> args;
 
   Map<String, Object?> toJson() => <String, Object?>{
         'from': from,
         'to': to,
+        'args': args,
       };
 }
 
 class _AstCollector extends RecursiveAstVisitor<void> {
   _AstCollector({
     required this.fileName,
+    required this.source,
     required Set<String> knownTopLevelFunctions,
     required Map<String, Set<String>> knownClassMethods,
+    required Map<String, List<Map<String, String>>> signatures,
   })  : _knownTopLevelFunctions = knownTopLevelFunctions,
-        _knownClassMethods = knownClassMethods;
+        _knownClassMethods = knownClassMethods,
+        _signatures = signatures;
 
   final String fileName;
+  final String source;
 
   final Set<String> _knownTopLevelFunctions;
   final Map<String, Set<String>> _knownClassMethods;
+  final Map<String, List<Map<String, String>>> _signatures;
 
   final Set<String> imports = <String>{};
   final Map<String, _ClassInfo> classes = <String, _ClassInfo>{};
   final Set<String> topLevelFunctions = <String>{};
   final Set<String> variables = <String>{};
   final List<_VariableScope> variableScopes = <_VariableScope>[];
-  final List<_CallEdge> calls = <_CallEdge>[];
+  final List<_CallSite> calls = <_CallSite>[];
 
   final List<String> _functionStack = <String>[];
   final List<String> _classStack = <String>[];
@@ -87,9 +98,65 @@ class _AstCollector extends RecursiveAstVisitor<void> {
     variableScopes.add(_VariableScope(name: name, parent: parent, kind: kind));
   }
 
-  void _recordCall(String from, String to) {
+  String _snippet(AstNode node) {
+    final s = source;
+    if (node.offset < 0 || node.end > s.length) {
+      return '?';
+    }
+    return s.substring(node.offset, node.end).trim();
+  }
+
+  List<Map<String, String>> _bindingsForInvocation(
+    String resolvedCallee,
+    MethodInvocation node,
+  ) {
+    final sig = _signatures[resolvedCallee];
+    final out = <Map<String, String>>[];
+    var pos = 0;
+    for (final arg in node.argumentList.arguments) {
+      if (arg is NamedExpression) {
+        final name = arg.name.label.name;
+        out.add(<String, String>{
+          'param': name,
+          'value': _snippet(arg.expression),
+        });
+      } else if (arg is Expression) {
+        String pname;
+        if (sig != null && pos < sig.length) {
+          pname = sig[pos]['name'] ?? '\$$pos';
+        } else {
+          pname = '\$$pos';
+        }
+        out.add(<String, String>{
+          'param': pname,
+          'value': _snippet(arg),
+        });
+        pos++;
+      }
+    }
+    return out;
+  }
+
+  void _recordCall(String from, String to, MethodInvocation node) {
     if (from.isEmpty || to.isEmpty) return;
-    calls.add(_CallEdge(from: from, to: to));
+    final args = _bindingsForInvocation(to, node);
+    calls.add(_CallSite(from: from, to: to, args: args));
+  }
+
+  void _recordCallSimple(String from, String to, FunctionExpressionInvocation node) {
+    if (from.isEmpty || to.isEmpty) return;
+    final out = <Map<String, String>>[];
+    var i = 0;
+    for (final arg in node.argumentList.arguments) {
+      if (arg is Expression) {
+        out.add(<String, String>{
+          'param': '\$$i',
+          'value': _snippet(arg),
+        });
+        i++;
+      }
+    }
+    calls.add(_CallSite(from: from, to: to, args: out));
   }
 
   @override
@@ -235,7 +302,7 @@ class _AstCollector extends RecursiveAstVisitor<void> {
                   true;
 
       if (isKnownTopLevel || isKnownQualifiedMethod) {
-        _recordCall(from, resolvedTo);
+        _recordCall(from, resolvedTo, node);
       }
     }
     super.visitMethodInvocation(node);
@@ -247,23 +314,77 @@ class _AstCollector extends RecursiveAstVisitor<void> {
     if (from != null) {
       final calleeExpr = node.function;
       if (calleeExpr is SimpleIdentifier) {
-        _recordCall(from, calleeExpr.name);
+        _recordCallSimple(from, calleeExpr.name, node);
       }
     }
     super.visitFunctionExpressionInvocation(node);
   }
 }
 
-class _PreCollector extends RecursiveAstVisitor<void> {
-  _PreCollector();
+class _DeclCollector extends RecursiveAstVisitor<void> {
+  _DeclCollector(this.source);
+
+  final String source;
 
   final Set<String> topLevelFunctions = <String>{};
   final Map<String, Set<String>> classMethods = <String, Set<String>>{};
+  /// Top-level `foo` or `Class.method` → ordered parameter name/type pairs.
+  final Map<String, List<Map<String, String>>> signatures =
+      <String, List<Map<String, String>>>{};
+
+  final List<String> _classStack = <String>[];
+
+  String _typeForParam(FormalParameter p) {
+    if (p is DefaultFormalParameter) {
+      return _typeForParam(p.parameter);
+    }
+    if (p is SimpleFormalParameter) {
+      final t = p.type;
+      if (t == null) {
+        return 'dynamic';
+      }
+      if (t.offset >= 0 && t.end <= source.length) {
+        return source.substring(t.offset, t.end).trim();
+      }
+      return t.toString();
+    }
+    return 'dynamic';
+  }
+
+  String _nameForParam(FormalParameter p) {
+    if (p is DefaultFormalParameter) {
+      return _nameForParam(p.parameter);
+    }
+    if (p is SimpleFormalParameter) {
+      return p.name?.lexeme ?? '';
+    }
+    return '';
+  }
+
+  List<Map<String, String>> _collectParams(FormalParameterList? list) {
+    if (list == null) {
+      return <Map<String, String>>[];
+    }
+    final out = <Map<String, String>>[];
+    for (final fp in list.parameters) {
+      final n = _nameForParam(fp);
+      if (n.isEmpty) {
+        continue;
+      }
+      out.add(<String, String>{
+        'name': n,
+        'type': _typeForParam(fp),
+      });
+    }
+    return out;
+  }
 
   @override
   void visitFunctionDeclaration(FunctionDeclaration node) {
     if (!node.isGetter && !node.isSetter) {
-      topLevelFunctions.add(node.name.lexeme);
+      final name = node.name.lexeme;
+      topLevelFunctions.add(name);
+      signatures[name] = _collectParams(node.functionExpression.parameters);
     }
     super.visitFunctionDeclaration(node);
   }
@@ -273,7 +394,6 @@ class _PreCollector extends RecursiveAstVisitor<void> {
     final className = node.namePart.typeName.lexeme;
     final methods = classMethods.putIfAbsent(className, () => <String>{});
 
-    // Pre-scan members so calls to methods declared later still resolve.
     for (final member in node.body.members) {
       if (member is MethodDeclaration) {
         if (!member.isGetter && !member.isSetter) {
@@ -282,23 +402,26 @@ class _PreCollector extends RecursiveAstVisitor<void> {
       }
     }
 
+    _classStack.add(className);
     super.visitClassDeclaration(node);
+    _classStack.removeLast();
+  }
+
+  @override
+  void visitMethodDeclaration(MethodDeclaration node) {
+    final cls = _classStack.isEmpty ? null : _classStack.last;
+    if (cls != null && !node.isGetter && !node.isSetter) {
+      final qualified = '$cls.${node.name.lexeme}';
+      signatures[qualified] = _collectParams(node.parameters);
+    }
+    super.visitMethodDeclaration(node);
   }
 }
 
-void main(List<String> args) {
-  if (args.isEmpty) {
-    stderr.writeln('Usage: dart parser.dart <path-to-dart-file>');
-    exitCode = 2;
-    return;
-  }
-
-  final filePath = args[0];
+Map<String, Object?> _parseDartFileToMap(String filePath) {
   final file = File(filePath);
   if (!file.existsSync()) {
-    stderr.writeln('File not found: $filePath');
-    exitCode = 2;
-    return;
+    throw StateError('File not found: $filePath');
   }
 
   final content = file.readAsStringSync();
@@ -310,13 +433,15 @@ void main(List<String> args) {
     throwIfDiagnostics: false,
   );
 
-  final pre = _PreCollector();
+  final pre = _DeclCollector(content);
   parsed.unit.accept(pre);
 
   final collector = _AstCollector(
     fileName: fileName,
+    source: content,
     knownTopLevelFunctions: pre.topLevelFunctions,
     knownClassMethods: pre.classMethods,
+    signatures: Map<String, List<Map<String, String>>>.from(pre.signatures),
   );
   parsed.unit.accept(collector);
 
@@ -335,27 +460,100 @@ void main(List<String> args) {
   final importsOut = collector.imports.toList()..sort();
   final variablesOut = collector.variables.toList()..sort();
 
-  final seenCalls = <String>{};
-  final callsOut = <Map<String, Object?>>[];
-  for (final c in collector.calls) {
-    final key = '${c.from}→${c.to}';
-    if (seenCalls.add(key)) {
-      callsOut.add(c.toJson());
-    }
-  }
+  final callsOut = collector.calls.map((c) => c.toJson()).toList();
 
-  final out = <String, Object?>{
+  final functionDefsOut = <Map<String, Object?>>[];
+  for (final e in pre.signatures.entries) {
+    functionDefsOut.add(<String, Object?>{
+      'name': e.key,
+      'params': e.value
+          .map(
+            (p) => <String, Object?>{
+              'name': p['name'],
+              'type': p['type'],
+            },
+          )
+          .toList(),
+    });
+  }
+  functionDefsOut.sort(
+    (a, b) => (a['name'] as String).compareTo(b['name'] as String),
+  );
+
+  return <String, Object?>{
     'file': fileName,
     'classes': classesOut,
     'functions': functionsOut,
     'variables': variablesOut,
     'imports': importsOut,
     'calls': callsOut,
+    'functionDefs': functionDefsOut,
 
     // Extra metadata for correct hierarchy + symbol table in TS normalizer.
     'variableScopes': collector.variableScopes.map((v) => v.toJson()).toList(),
   };
+}
 
-  stdout.write(jsonEncode(out));
+/// One JSON object per line: `{"ok":true,"result":{...}}` or `{"ok":false,"error":"..."}`.
+void _runServer() {
+  while (true) {
+    final line = stdin.readLineSync(encoding: utf8);
+    if (line == null) {
+      return;
+    }
+    final trimmed = line.trim();
+    if (trimmed.isEmpty) {
+      continue;
+    }
+
+    Object? decoded;
+    try {
+      decoded = jsonDecode(trimmed);
+    } catch (_) {
+      stdout.writeln(jsonEncode(<String, Object?>{'ok': false, 'error': 'Invalid JSON request'}));
+      continue;
+    }
+
+    if (decoded is! Map) {
+      stdout.writeln(jsonEncode(<String, Object?>{'ok': false, 'error': 'Expected JSON object'}));
+      continue;
+    }
+
+    final pathRaw = decoded['path'];
+    if (pathRaw is! String || pathRaw.isEmpty) {
+      stdout.writeln(jsonEncode(<String, Object?>{'ok': false, 'error': 'Missing path'}));
+      continue;
+    }
+
+    try {
+      final result = _parseDartFileToMap(pathRaw);
+      stdout.writeln(jsonEncode(<String, Object?>{'ok': true, 'result': result}));
+    } catch (e) {
+      stdout.writeln(jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
+    }
+  }
+}
+
+void main(List<String> args) {
+  if (args.length == 1 && args[0] == '--server') {
+    _runServer();
+    return;
+  }
+
+  if (args.isEmpty) {
+    stderr.writeln('Usage: dart parser.dart <path-to-dart-file>');
+    stderr.writeln('   or: dart parser.dart --server');
+    exitCode = 2;
+    return;
+  }
+
+  final filePath = args[0];
+  try {
+    final out = _parseDartFileToMap(filePath);
+    stdout.write(jsonEncode(out));
+  } catch (e) {
+    stderr.writeln(e.toString());
+    exitCode = 2;
+  }
 }
 
