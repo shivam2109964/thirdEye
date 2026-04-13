@@ -9,9 +9,7 @@ export function showGraphPanel(context: vscode.ExtensionContext, graph: any) {
             'thirdeyeGraph',
             'ThirdEye Graph',
             vscode.ViewColumn.Beside,
-            {
-                enableScripts: true
-            }
+            { enableScripts: true }
         );
 
         panel.onDidDispose(() => {
@@ -19,148 +17,178 @@ export function showGraphPanel(context: vscode.ExtensionContext, graph: any) {
         });
     }
 
-    const htmlPath = vscode.Uri.joinPath(context.extensionUri, 'media', 'graph.html');
-    const htmlUri = panel.webview.asWebviewUri(htmlPath);
-
-    panel.webview.html = getHtml(htmlUri);
-
+    panel.webview.html = getHtml();
     panel.webview.postMessage(graph);
 }
 
-function getHtml(htmlUri: vscode.Uri) {
+function getHtml() {
     return `
     <!DOCTYPE html>
     <html>
     <head>
         <style>
-            body { margin:0; background:#0f172a; color:white; font-family:sans-serif; }
-            #container { display:flex; height:100vh; }
-            #graph { flex:1; position:relative; overflow:auto; }
-            #sidebar { width:300px; background:#111827; padding:10px; overflow:auto; }
+            body { margin:0; background:#0f172a; font-family:sans-serif; }
+            #graph { position:relative; width:100%; height:100vh; }
 
             .node {
                 position:absolute;
-                padding:6px 10px;
-                border-radius:6px;
-                font-size:12px;
-                white-space:nowrap;
-            }
-
-            .layer-box {
-                position:absolute;
-                left:10px;
-                right:10px;
-                height:90px;
-                border:1px solid #1f2937;
+                padding:10px 18px;
                 border-radius:10px;
-                background:#111827;
+                background:#1f2937;
+                color:white;
+                border:1px solid #374151;
+                font-size:13px;
             }
 
-            .layer-title {
+            svg {
                 position:absolute;
-                left:10px;
-                top:5px;
-                font-size:11px;
-                color:#9ca3af;
+                top:0;
+                left:0;
+                width:100%;
+                height:100%;
+                pointer-events:none;
             }
         </style>
     </head>
     <body>
-        <div id="container">
-            <div id="graph"></div>
-            <div id="sidebar"></div>
-        </div>
+        <div id="graph"></div>
 
         <script>
-            const vscode = acquireVsCodeApi();
+            window.addEventListener('message', e => render(e.data));
 
-            window.addEventListener('message', event => {
-                const graph = event.data;
-                render(graph);
-            });
-
-            function render(graph) {
+            function render(graph){
                 const g = document.getElementById('graph');
                 g.innerHTML = '';
 
-                const byStep = new Map();
+                const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+                g.appendChild(svg);
+
+                // ===== BUILD ADJ LIST (CALL GRAPH) =====
+                const adj = new Map();
+                const indegree = new Map();
+
                 graph.nodes.forEach(n => {
-                    if (n.flowStep === undefined) return;
-                    if (!byStep.has(n.flowStep)) byStep.set(n.flowStep, []);
-                    byStep.get(n.flowStep).push(n);
+                    adj.set(n.id, []);
+                    indegree.set(n.id, 0);
                 });
 
-                const orderedSteps = [...byStep.keys()].sort((a, b) => a - b);
+                graph.edges.forEach(e=>{
+                    if(e.type !== 'call') return;
 
-                const flowTitle = (step) => {
-                    if (step !== 0) {
-                        return 'Flow ' + step;
-                    }
-                    if (graph.root) {
-                        const rn = graph.nodes.find((x) => x.id === graph.root);
-                        if (rn && rn.label) {
-                            return 'Flow 0 — ' + rn.label;
+                    adj.get(e.from).push(e.to);
+                    indegree.set(e.to, (indegree.get(e.to) || 0) + 1);
+                });
+
+                // ===== FIND ROOT (main) =====
+                let root = graph.root;
+                if(!root){
+                    root = graph.nodes.find(n => n.label === 'main')?.id;
+                }
+
+                if(!root){
+                    root = graph.nodes[0]?.id;
+                }
+
+                // ===== BFS LAYOUT =====
+                const levels = new Map(); // node → depth
+                const queue = [root];
+                levels.set(root, 0);
+
+                while(queue.length){
+                    const node = queue.shift();
+                    const level = levels.get(node);
+
+                    (adj.get(node) || []).forEach(child=>{
+                        if(!levels.has(child)){
+                            levels.set(child, level + 1);
+                            queue.push(child);
                         }
-                    }
-                    return 'Flow 0';
-                };
+                    });
+                }
 
-                let y = 20;
+                // ===== GROUP BY LEVEL =====
+                const levelMap = new Map();
 
-                orderedSteps.forEach(step => {
-                    const layer = byStep.get(step);
+                levels.forEach((lvl, node)=>{
+                    if(!levelMap.has(lvl)) levelMap.set(lvl, []);
+                    levelMap.get(lvl).push(node);
+                });
 
-                    if (!layer || layer.length === 0) {
-                        y += 100;
-                        return;
-                    }
+                // ===== POSITION NODES =====
+                const nodePos = new Map();
 
-                    const container = document.createElement('div');
-                    container.className = 'layer-box';
-                    container.style.top = y + 'px';
+                const levelKeys = [...levelMap.keys()].sort((a,b)=>a-b);
 
-                    const title = document.createElement('div');
-                    title.className = 'layer-title';
-                    title.innerText = flowTitle(step);
+                levelKeys.forEach((lvl)=>{
+                    const nodes = levelMap.get(lvl);
 
-                    container.appendChild(title);
+                    const y = 100 + lvl * 150;
 
-                    let x = 20;
+                    const totalWidth = nodes.length * 180;
+                    let startX = (window.innerWidth - totalWidth) / 2;
 
-                    // NODES
-                    layer.forEach(n => {
+                    nodes.forEach((id, i)=>{
+                        const node = graph.nodes.find(n=>n.id===id);
+
+                        const x = startX + i * 180;
+
+                        nodePos.set(id, {x, y});
+
                         const el = document.createElement('div');
                         el.className = 'node';
-                        el.innerText = n.label;
+                        el.innerText = node.label;
+
                         el.style.left = x + 'px';
-                        el.style.top = '30px';
-                        el.style.background = n.color;
+                        el.style.top = y + 'px';
 
-                        container.appendChild(el);
-                        x += 140;
+                        g.appendChild(el);
                     });
-
-                    g.appendChild(container);
-
-                    y += 110;
                 });
 
-                renderSidebar(graph.symbols);
+                // ===== DRAW EDGES =====
+                graph.edges.forEach(e=>{
+                    if(e.type !== 'call') return;
+
+                    const from = nodePos.get(e.from);
+                    const to = nodePos.get(e.to);
+
+                    if(!from || !to) return;
+
+                    drawCurve(svg, from, to);
+                });
             }
 
-            function renderSidebar(symbols) {
-                const s = document.getElementById('sidebar');
+            function drawCurve(svg, from, to){
+                const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
 
-                s.innerHTML =
-                    '<h3>Symbol Table</h3>' +
-                    '<b>Variables</b>' +
-                    symbols.variables.map(v => '<div>'+v+'</div>').join('') +
-                    '<hr/>' +
-                    '<b>Functions</b>' +
-                    symbols.functions.map(v => '<div>'+v+'</div>').join('') +
-                    '<hr/>' +
-                    '<b>Classes</b>' +
-                    symbols.classes.map(v => '<div>'+v+'</div>').join('');
+                const dx = (to.x - from.x) / 2;
+
+                const d = \`
+                    M \${from.x + 60} \${from.y + 40}
+                    C \${from.x + 60} \${from.y + 40 + dx},
+                      \${to.x + 60} \${to.y - dx},
+                      \${to.x + 60} \${to.y}
+                \`;
+
+                path.setAttribute("d", d);
+                path.setAttribute("stroke", "#9ca3af");
+                path.setAttribute("fill", "none");
+                path.setAttribute("stroke-width", "2");
+
+                svg.appendChild(path);
+
+                // arrow head
+                const arrow = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+
+                arrow.setAttribute("points",
+                    (to.x + 55) + "," + (to.y - 5) + " " +
+                    (to.x + 65) + "," + (to.y - 5) + " " +
+                    (to.x + 60) + "," + to.y
+                );
+
+                arrow.setAttribute("fill", "#9ca3af");
+
+                svg.appendChild(arrow);
             }
         </script>
     </body>

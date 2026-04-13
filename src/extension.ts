@@ -20,6 +20,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Explicitly set ignore flags to false (i.e., DO NOT ignore events).
     const watcher = vscode.workspace.createFileSystemWatcher(pattern, false, false, false);
     console.log('Watcher created');
+    console.log('⏳ ThirdEye: waiting for file changes (next .dart change will log loading → done)…');
 
     context.subscriptions.push(
         watcher,
@@ -51,13 +52,15 @@ export function activate(context: vscode.ExtensionContext) {
                 return;
             }
 
+            console.log('⏳ ThirdEye: loading (read + parse + graph)…', uri.fsPath);
             try {
                 const data = parseDartFile(uri.fsPath, context.extensionPath);
                 const graph = normalizeDartParse(data);
                 console.log('DATA:', JSON.stringify(data, null, 2));
                 showGraphPanel(context, graph);
+                console.log('✅ ThirdEye: loading finished — graph panel updated');
             } catch (err) {
-                console.log('❌ Parse error:', err);
+                console.log('❌ ThirdEye: loading failed — parse error:', err);
             }
         }),
         watcher.onDidDelete((uri) => {
