@@ -11,6 +11,8 @@ export type DartClass = {
 export type DartCallSite = {
     from: string;
     to: string;
+    /** Receiver identifier for `receiver.method()` (e.g. userService). */
+    objectName?: string;
     args?: Array<{ param: string; value: string }>;
 };
 

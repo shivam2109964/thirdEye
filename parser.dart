@@ -41,15 +41,18 @@ class _CallSite {
     required this.from,
     required this.to,
     required this.args,
+    this.objectName,
   });
   final String from;
   final String to;
   final List<Map<String, String>> args;
+  final String? objectName;
 
   Map<String, Object?> toJson() => <String, Object?>{
         'from': from,
         'to': to,
         'args': args,
+        if (objectName != null) 'objectName': objectName,
       };
 }
 
@@ -137,10 +140,17 @@ class _AstCollector extends RecursiveAstVisitor<void> {
     return out;
   }
 
-  void _recordCall(String from, String to, MethodInvocation node) {
+  void _recordCall(
+    String from,
+    String to,
+    MethodInvocation node, {
+    String? objectName,
+  }) {
     if (from.isEmpty || to.isEmpty) return;
     final args = _bindingsForInvocation(to, node);
-    calls.add(_CallSite(from: from, to: to, args: args));
+    calls.add(
+      _CallSite(from: from, to: to, args: args, objectName: objectName),
+    );
   }
 
   void _recordCallSimple(String from, String to, FunctionExpressionInvocation node) {
@@ -279,19 +289,36 @@ class _AstCollector extends RecursiveAstVisitor<void> {
     if (from != null) {
       final rawTo = node.methodName.name;
 
-      // Resolve within-file symbol when possible.
       String resolvedTo = rawTo;
+      String? objectName;
 
+      // Implicit `this` / same-class method: otherMethod() → Class.otherMethod
       final cls = _currentClass;
-      if (cls != null) {
+      if (node.target == null && cls != null) {
         final methods = _knownClassMethods[cls];
         if (methods != null && methods.contains(rawTo)) {
           resolvedTo = '$cls.$rawTo';
         }
       }
 
+      // Explicit receiver: userService.createUser()
+      if (node.target != null) {
+        final target = node.target;
+        if (target is SimpleIdentifier) {
+          objectName = target.name;
+
+          for (final entry in _knownClassMethods.entries) {
+            if (entry.value.contains(rawTo)) {
+              resolvedTo = '${entry.key}.$rawTo';
+              break;
+            }
+          }
+        }
+      }
+
       if (_knownTopLevelFunctions.contains(rawTo)) {
         resolvedTo = rawTo;
+        objectName = null;
       }
 
       final isKnownTopLevel = _knownTopLevelFunctions.contains(resolvedTo);
@@ -302,7 +329,7 @@ class _AstCollector extends RecursiveAstVisitor<void> {
                   true;
 
       if (isKnownTopLevel || isKnownQualifiedMethod) {
-        _recordCall(from, resolvedTo, node);
+        _recordCall(from, resolvedTo, node, objectName: objectName);
       }
     }
     super.visitMethodInvocation(node);

@@ -28,6 +28,10 @@ export function activate(context: vscode.ExtensionContext) {
 
     async function runParseGraph(dartPath: string): Promise<void> {
         console.log('⏳ ThirdEye: loading (read + parse + graph)…', dartPath);
+        const wf = vscode.workspace.workspaceFolders?.[0];
+        if (!wf) {
+            return;
+        }
         try {
             const data = await parseDartFile(dartPath, context.extensionPath);
             const tree = buildExecutionTreeView(data);
