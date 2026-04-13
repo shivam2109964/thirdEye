@@ -5,28 +5,57 @@ export function activate(context: vscode.ExtensionContext) {
 
     console.log('🔥 ThirdEye Activated');
 
-    const watcher = vscode.workspace.createFileSystemWatcher('**/*.ts');
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (!folder) {
+        console.log('⚠️ No workspace folder is open. File watcher will not receive events until you open a folder/workspace.');
+        return;
+    }
 
-    watcher.onDidChange(uri => {
-        console.log("🟡 Changed:", uri.fsPath);
+    const pattern = new vscode.RelativePattern(folder, '**/*');
+    console.log('Watching workspace folder:', folder.uri.fsPath);
+    console.log('Watcher glob pattern:', pattern.pattern);
 
-        try {
-            const data = parseFile(uri.fsPath);
-           console.log("DATA:", JSON.stringify(data, null, 2));
-        } catch (err) {
-            console.log("❌ Parse error:", err);
-        }
-    });
+    // Explicitly set ignore flags to false (i.e., DO NOT ignore events).
+    const watcher = vscode.workspace.createFileSystemWatcher(pattern, false, false, false);
+    console.log('Watcher created');
 
-    watcher.onDidCreate(uri => {
-        console.log("🟢 Created:", uri.fsPath);
-    });
+    context.subscriptions.push(
+        watcher,
+        vscode.workspace.onDidCreateFiles((e) => {
+            for (const f of e.files) {
+                console.log('🧩 onDidCreateFiles:', f.scheme, f.fsPath);
+            }
+        }),
+        vscode.workspace.onDidDeleteFiles((e) => {
+            for (const f of e.files) {
+                console.log('🧩 onDidDeleteFiles:', f.scheme, f.fsPath);
+            }
+        }),
+        vscode.workspace.onDidRenameFiles((e) => {
+            for (const f of e.files) {
+                console.log('🧩 onDidRenameFiles:', f.oldUri.fsPath, '->', f.newUri.fsPath);
+            }
+        }),
+        vscode.workspace.onDidSaveTextDocument((doc) => {
+            console.log('🧩 onDidSaveTextDocument:', doc.uri.scheme, doc.uri.fsPath);
+        }),
+        watcher.onDidCreate((uri) => {
+            console.log('🟢 watcher.onDidCreate:', uri.scheme, uri.fsPath);
+        }),
+        watcher.onDidChange((uri) => {
+            console.log('🟡 watcher.onDidChange:', uri.scheme, uri.fsPath);
 
-    watcher.onDidDelete(uri => {
-        console.log("🔴 Deleted:", uri.fsPath);
-    });
-
-    context.subscriptions.push(watcher);
+            try {
+                const data = parseFile(uri.fsPath);
+                console.log('DATA:', JSON.stringify(data, null, 2));
+            } catch (err) {
+                console.log('❌ Parse error:', err);
+            }
+        }),
+        watcher.onDidDelete((uri) => {
+            console.log('🔴 watcher.onDidDelete:', uri.scheme, uri.fsPath);
+        }),
+    );
 }
 
-export function deactivate() {}
+export function deactivate() { }
