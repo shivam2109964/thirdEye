@@ -123,6 +123,7 @@ class _AstCollector extends RecursiveAstVisitor<void> {
           'param': name,
           'value': _snippet(arg.expression),
         });
+        // ignore: unnecessary_type_check
       } else if (arg is Expression) {
         String pname;
         if (sig != null && pos < sig.length) {
@@ -153,11 +154,13 @@ class _AstCollector extends RecursiveAstVisitor<void> {
     );
   }
 
-  void _recordCallSimple(String from, String to, FunctionExpressionInvocation node) {
+  void _recordCallSimple(
+      String from, String to, FunctionExpressionInvocation node) {
     if (from.isEmpty || to.isEmpty) return;
     final out = <Map<String, String>>[];
     var i = 0;
     for (final arg in node.argumentList.arguments) {
+      // ignore: unnecessary_type_check
       if (arg is Expression) {
         out.add(<String, String>{
           'param': '\$$i',
@@ -229,7 +232,8 @@ class _AstCollector extends RecursiveAstVisitor<void> {
     for (final p in params) {
       final pName = p.name?.lexeme;
       if (pName != null && pName.isNotEmpty) {
-        _recordVariable(pName, parent: 'function:$qualified', kind: 'parameter');
+        _recordVariable(pName,
+            parent: 'function:$qualified', kind: 'parameter');
       }
     }
 
@@ -322,11 +326,10 @@ class _AstCollector extends RecursiveAstVisitor<void> {
       }
 
       final isKnownTopLevel = _knownTopLevelFunctions.contains(resolvedTo);
-      final isKnownQualifiedMethod =
-          resolvedTo.contains('.') &&
-              _knownClassMethods[resolvedTo.split('.').first]
-                      ?.contains(resolvedTo.split('.').last) ==
-                  true;
+      final isKnownQualifiedMethod = resolvedTo.contains('.') &&
+          _knownClassMethods[resolvedTo.split('.').first]
+                  ?.contains(resolvedTo.split('.').last) ==
+              true;
 
       if (isKnownTopLevel || isKnownQualifiedMethod) {
         _recordCall(from, resolvedTo, node, objectName: objectName);
@@ -355,6 +358,7 @@ class _DeclCollector extends RecursiveAstVisitor<void> {
 
   final Set<String> topLevelFunctions = <String>{};
   final Map<String, Set<String>> classMethods = <String, Set<String>>{};
+
   /// Top-level `foo` or `Class.method` → ordered parameter name/type pairs.
   final Map<String, List<Map<String, String>>> signatures =
       <String, List<Map<String, String>>>{};
@@ -537,26 +541,31 @@ void _runServer() {
     try {
       decoded = jsonDecode(trimmed);
     } catch (_) {
-      stdout.writeln(jsonEncode(<String, Object?>{'ok': false, 'error': 'Invalid JSON request'}));
+      stdout.writeln(jsonEncode(
+          <String, Object?>{'ok': false, 'error': 'Invalid JSON request'}));
       continue;
     }
 
     if (decoded is! Map) {
-      stdout.writeln(jsonEncode(<String, Object?>{'ok': false, 'error': 'Expected JSON object'}));
+      stdout.writeln(jsonEncode(
+          <String, Object?>{'ok': false, 'error': 'Expected JSON object'}));
       continue;
     }
 
     final pathRaw = decoded['path'];
     if (pathRaw is! String || pathRaw.isEmpty) {
-      stdout.writeln(jsonEncode(<String, Object?>{'ok': false, 'error': 'Missing path'}));
+      stdout.writeln(
+          jsonEncode(<String, Object?>{'ok': false, 'error': 'Missing path'}));
       continue;
     }
 
     try {
       final result = _parseDartFileToMap(pathRaw);
-      stdout.writeln(jsonEncode(<String, Object?>{'ok': true, 'result': result}));
+      stdout
+          .writeln(jsonEncode(<String, Object?>{'ok': true, 'result': result}));
     } catch (e) {
-      stdout.writeln(jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
+      stdout.writeln(
+          jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
     }
   }
 }
@@ -583,4 +592,3 @@ void main(List<String> args) {
     exitCode = 2;
   }
 }
-
