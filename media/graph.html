@@ -89,12 +89,12 @@
             width: 10px; height: 10px; border-radius: 3px;
             border: 1px solid rgba(255,255,255,0.15);
         }
-        .lg-root { background: #22d3ee; box-shadow: 0 0 8px #22d3ee; }
-        .lg-int { background: #60a5fa; }
-        .lg-ext { background: #a78bfa; }
+        /* Palette: primary cyan #00E5FF (functions), secondary purple #BB86FC (classes), tertiary amber #FFC107 (flow) */
+        .lg-fn { background: #00E5FF; box-shadow: 0 0 8px rgba(0, 229, 255, 0.45); }
+        .lg-class { background: #BB86FC; box-shadow: 0 0 8px rgba(187, 134, 252, 0.45); }
         .lg-circ { background: #f87171; }
-        .lg-solid { width: 18px; height: 2px; background: #64748b; border-radius: 0; }
-        .lg-dash { width: 18px; height: 0; border-top: 2px dashed #94a3b8; background: transparent; border-radius: 0; }
+        .lg-flow { width: 18px; height: 2px; background: #FFC107; border-radius: 0; border: none; box-shadow: 0 0 6px rgba(255, 193, 7, 0.5); }
+        .lg-dash { width: 18px; height: 0; border-top: 2px dashed rgba(255, 193, 7, 0.55); background: transparent; border-radius: 0; }
 
         .viewport-wrap {
             flex: 1 1 auto;
@@ -139,27 +139,29 @@
         }
         .edges-svg .edge-line {
             fill: none;
-            stroke: #64748b;
-            stroke-width: 1.25;
+            stroke: #FFC107;
+            stroke-width: 1.35;
         }
         .edges-svg .edge-line.dashed {
             stroke-dasharray: 5 5;
+            stroke: #D4A017;
+            opacity: 0.9;
         }
         .edges-svg .edge-line.dim {
-            opacity: 0.2;
+            opacity: 0.22;
         }
         .edges-svg .edge-line.hl {
             opacity: 1;
-            stroke: #94a3b8;
+            stroke: #FFD54F;
         }
         .edges-svg .edge-line.hl.direct {
-            stroke: #22d3ee;
+            stroke: #FFECB3;
         }
         .arrowhead {
-            fill: #64748b;
+            fill: #FFC107;
         }
-        .arrowhead.hl { fill: #94a3b8; }
-        .arrowhead.hl.direct { fill: #22d3ee; }
+        .arrowhead.hl { fill: #FFD54F; }
+        .arrowhead.hl.direct { fill: #FFECB3; }
 
         .nodes-layer {
             position: absolute;
@@ -209,20 +211,28 @@
             box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.3);
         }
 
-        .g-node.kind-root .port {
-            background: #22d3ee;
-            box-shadow: 0 0 14px 4px rgba(34, 211, 238, 0.55);
+        /* Primary — top-level / free functions */
+        .g-node.semantic-function .port {
+            background: #00E5FF;
+            box-shadow: 0 0 14px 4px rgba(0, 229, 255, 0.45);
         }
-        .g-node.kind-root .label { color: #67e8f9; border-color: rgba(34, 211, 238, 0.45); }
+        .g-node.semantic-function .label {
+            color: #84FFFF;
+            border-color: rgba(0, 229, 255, 0.5);
+        }
 
-        .g-node.kind-internal .port { background: #60a5fa; }
-        .g-node.kind-internal .label { color: #93c5fd; border-color: rgba(96, 165, 250, 0.4); }
+        /* Secondary — class methods (Class.method) */
+        .g-node.semantic-class .port {
+            background: #BB86FC;
+            box-shadow: 0 0 14px 4px rgba(187, 134, 252, 0.45);
+        }
+        .g-node.semantic-class .label {
+            color: #E1BEE7;
+            border-color: rgba(187, 134, 252, 0.55);
+        }
 
-        .g-node.kind-external .port { background: #a78bfa; }
-        .g-node.kind-external .label { color: #c4b5fd; border-color: rgba(167, 139, 250, 0.45); }
-
-        .g-node.kind-circular .port { background: #f87171; }
-        .g-node.kind-circular .label { color: #fca5a5; border-color: rgba(248, 113, 113, 0.45); }
+        .g-node.semantic-circular .port { background: #f87171; }
+        .g-node.semantic-circular .label { color: #fca5a5; border-color: rgba(248, 113, 113, 0.45); }
 
         .zoom-hint {
             position: absolute;
@@ -309,17 +319,21 @@
             color: #cbd5e1;
         }
         .tree-root {
-            color: #7dd3fc;
             font-weight: 500;
         }
+        .tree-root.tree-line--fn { color: #00E5FF; }
+        .tree-root.tree-line--class { color: #BB86FC; }
         .tree-branch {
             color: #64748b;
         }
-        .tree-name--dir {
-            color: #93c5fd;
+        .tree-name--fn {
+            color: #00E5FF;
+        }
+        .tree-name--class {
+            color: #BB86FC;
         }
         .tree-name--file {
-            color: #a5b4fc;
+            color: #94a3b8;
         }
         .zoom-hint--muted {
             opacity: 0.85;
@@ -339,12 +353,11 @@
             </div>
         </div>
         <div class="legend" id="legend" hidden>
-            <span><i class="lg-root"></i> Root</span>
-            <span><i class="lg-int"></i> Internal</span>
-            <span><i class="lg-ext"></i> External</span>
-            <span><i class="lg-circ"></i> Circular</span>
-            <span><i class="lg-solid"></i> Direct</span>
-            <span><i class="lg-dash"></i> Indirect / circular</span>
+            <span><i class="lg-fn"></i> Function</span>
+            <span><i class="lg-class"></i> Class method</span>
+            <span><i class="lg-circ"></i> Circular call</span>
+            <span><i class="lg-flow"></i> Call flow</span>
+            <span><i class="lg-dash"></i> Indirect / circular flow</span>
         </div>
     </div>
     <div class="panel-stack">
@@ -467,9 +480,22 @@
             .join('');
     }
 
+    function isClassMethodNode(node) {
+        if (!node) return false;
+        var fn = node.functionName ? String(node.functionName) : '';
+        return !!(node.className || fn.indexOf('.') > 0);
+    }
+
     function buildFunctionAsciiRows(rootCall) {
         var out = [];
-        out.push('<span class="tree-root">' + escapeHtml(formatCallLine(rootCall)) + '</span>');
+        var rootSemantic = isClassMethodNode(rootCall) ? 'tree-line--class' : 'tree-line--fn';
+        out.push(
+            '<span class="tree-root ' +
+                rootSemantic +
+                '">' +
+                escapeHtml(formatCallLine(rootCall)) +
+                '</span>',
+        );
         if (rootCall.children && rootCall.children.length) {
             walkFunctionRows(rootCall.children, '', out);
         }
@@ -482,12 +508,15 @@
             var c = children[i];
             var branch = last ? '\u2514\u2500\u2500 ' : '\u251c\u2500\u2500 ';
             var line = escapeHtml(formatCallLine(c));
+            var nameClass = isClassMethodNode(c) ? 'tree-name--class' : 'tree-name--fn';
             out.push(
                 '<span class="tree-branch">' +
                     escapeHtml(prefix) +
                     '</span><span class="tree-branch">' +
                     branch +
-                    '</span><span class="tree-name--dir tree-name">' +
+                    '</span><span class="tree-name ' +
+                    nameClass +
+                    '">' +
                     line +
                     '</span>',
             );
@@ -701,7 +730,17 @@
                 if (keyFor(t.anc[a]) === k) { circ = true; break; }
             }
             var el = document.createElement('div');
-            el.className = 'g-node kind-' + (t.kind === 'root' ? 'root' : t.kind === 'external' ? 'external' : t.kind === 'circular' ? 'circular' : 'internal');
+            var node = t.node;
+            var isCircular = t.kind === 'circular';
+            var fn = node && node.functionName ? String(node.functionName) : '';
+            var isClassCall =
+                !isCircular &&
+                !!(
+                    (node && node.className) ||
+                    (fn.indexOf('.') > 0)
+                );
+            var semantic = isCircular ? 'circular' : isClassCall ? 'class' : 'function';
+            el.className = 'g-node semantic-' + semantic;
             el.dataset.id = t.id;
             var port = document.createElement('div');
             port.className = 'port';

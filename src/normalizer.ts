@@ -36,11 +36,12 @@ export type NormalizedGraph = {
     };
 };
 
+/** Aligned with graph palette: primary #00E5FF, secondary #BB86FC; file/variable stay distinct for tooling. */
 const COLORS: Record<GraphNodeType, string> = {
-    file: 'orange',
-    class: 'purple',
-    function: 'blue',
-    variable: 'green',
+    file: '#78909C',
+    class: '#BB86FC',
+    function: '#00E5FF',
+    variable: '#4CAF50',
 };
 
 function assignLinearFlowSteps(nodes: GraphNode[], edges: GraphEdge[], root?: string): void {
