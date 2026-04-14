@@ -1,202 +1,235 @@
-import path from 'path';
-import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'child_process';
-import * as readline from 'readline';
+import * as fs from 'fs';
+const { parse } = require('java-parser');
 
-export type DartClass = {
+export type JavaClass = {
     name: string;
     methods: string[];
     fields: string[];
+    annotations: string[];
 };
 
-export type DartCallSite = {
+export type JavaCallSite = {
     from: string;
     to: string;
-    /** Receiver identifier for `receiver.method()` (e.g. userService). */
     objectName?: string;
     args?: Array<{ param: string; value: string }>;
 };
 
-export type DartFunctionDef = {
+export type JavaFunctionDef = {
     name: string;
     params: Array<{ name: string; type: string }>;
+    annotations: string[];
 };
 
-export type DartParseResult = {
+export type ParseResult = {
     file: string;
-    classes: DartClass[];
+    classes: JavaClass[];
     functions: string[];
     variables: string[];
     imports: string[];
-    calls: DartCallSite[];
-    /** Top-level and `Class.method` signatures from static analysis. */
-    functionDefs?: DartFunctionDef[];
-    // Extra metadata emitted by the Dart parser (safe to ignore by consumers)
+    calls: JavaCallSite[];
+    functionDefs?: JavaFunctionDef[];
     variableScopes?: Array<{ name: string; parent: string; kind: string }>;
 };
 
-/** Thrown for `ok: false` from the Dart parser (same class of errors as a failed one-shot parse). */
-export class DartParseUserError extends Error {
-    readonly name = 'DartParseUserError';
+// Error thrown for invalid java files
+export class JavaParseUserError extends Error {
+    readonly name = 'JavaParseUserError';
 }
 
-type ServerResponse = { ok: true; result: DartParseResult } | { ok: false; error?: string };
-
-let service: DartParseService | undefined;
-
-export function disposeDartParseService(): void {
-    service?.dispose();
-    service = undefined;
-}
-
-function getDartParseService(extensionRootPath: string): DartParseService {
-    if (!service || service.extensionRootPath !== extensionRootPath) {
-        service?.dispose();
-        service = new DartParseService(extensionRootPath);
+function traverse(node: any, visitors: { [key: string]: (n: any) => void }) {
+    if (!node || typeof node !== 'object') return;
+    
+    if (node.name && visitors[node.name]) {
+        visitors[node.name](node);
     }
-    return service;
-}
-
-/**
- * Parses a Dart file using a long-lived `dart run parser.dart --server` process when possible,
- * with one-shot `dart run parser.dart <path>` fallback if the server fails.
- */
-export async function parseDartFile(filePath: string, extensionRootPath: string): Promise<DartParseResult> {
-    return getDartParseService(extensionRootPath).parse(filePath);
-}
-
-class DartParseService {
-    readonly extensionRootPath: string;
-    private child: ChildProcessWithoutNullStreams | undefined;
-    private rl: readline.Interface | undefined;
-    private tail: Promise<void> = Promise.resolve();
-
-    constructor(extensionRootPath: string) {
-        this.extensionRootPath = extensionRootPath;
+    
+    if (node.children) {
+        for (const key of Object.keys(node.children)) {
+            const childArray = node.children[key];
+            if (Array.isArray(childArray)) {
+                childArray.forEach(child => traverse(child, visitors));
+            }
+        }
     }
+}
 
-    parse(filePath: string): Promise<DartParseResult> {
-        const run = async (): Promise<DartParseResult> => {
-            try {
-                return await this.parseViaServer(filePath);
-            } catch (e) {
-                if (e instanceof DartParseUserError) {
-                    throw e;
+function extractIdentifier(node: any): string | undefined {
+    if (!node) return undefined;
+    if (node.children && node.children.Identifier) {
+        return node.children.Identifier[0].image;
+    }
+    if (node.children) {
+        for (const key of Object.keys(node.children)) {
+            const childArray = node.children[key];
+            if (Array.isArray(childArray)) {
+                for (const child of childArray) {
+                    const res = extractIdentifier(child);
+                    if (res) return res;
                 }
-                this.disposeChild();
-                return this.parseViaOneShot(filePath);
             }
-        };
-
-        const p = new Promise<DartParseResult>((resolve, reject) => {
-            this.tail = this.tail.then(() => run().then(resolve, reject));
-        });
-        return p;
-    }
-
-    dispose(): void {
-        this.disposeChild();
-    }
-
-    private disposeChild(): void {
-        this.rl?.close();
-        this.rl = undefined;
-        if (this.child && !this.child.killed) {
-            this.child.kill();
         }
-        this.child = undefined;
     }
+    return undefined;
+}
 
-    private async ensureServer(): Promise<void> {
-        if (this.child && !this.child.killed && this.rl) {
-            return;
+function extractAllIdentifiers(node: any): string[] {
+    const ids: string[] = [];
+    if (!node) return ids;
+    if (node.children && node.children.Identifier) {
+        for (const token of node.children.Identifier) {
+            if (token.image) ids.push(token.image);
         }
-
-        this.disposeChild();
-
-        const child = spawn('dart', ['run', 'parser.dart', '--server'], {
-            cwd: this.extensionRootPath,
-            stdio: ['pipe', 'pipe', 'pipe'],
-        });
-        this.child = child;
-
-        this.rl = readline.createInterface({ input: child.stdout, terminal: false });
-
-        child.stderr?.on('data', () => {
-            /* analyzer may print to stderr; ignore unless debugging */
-        });
-
-        child.on('error', () => {
-            this.disposeChild();
-        });
-
-        child.on('close', () => {
-            if (this.child === child) {
-                this.disposeChild();
+    }
+    if (node.children) {
+        for (const key of Object.keys(node.children)) {
+            const childArray = node.children[key];
+            if (Array.isArray(childArray)) {
+                for (const child of childArray) {
+                    ids.push(...extractAllIdentifiers(child));
+                }
             }
-        });
-
-        await new Promise<void>((resolve) => setImmediate(resolve));
+        }
     }
+    return ids;
+}
 
-    private readResponseLine(): Promise<string> {
-        return new Promise((resolve, reject) => {
-            const rl = this.rl;
-            const child = this.child;
-            if (!rl || !child) {
-                reject(new Error('Dart parser server not running'));
-                return;
+function extractAnnotations(node: any): string[] {
+    const annotations: string[] = [];
+    traverse(node, {
+        annotation: (n: any) => {
+            const typeName = extractIdentifier(n);
+            if (typeName) {
+                annotations.push(`@${typeName}`);
             }
+        }
+    });
+    return annotations;
+}
 
-            const onLine = (line: string) => {
-                cleanup();
-                resolve(line);
-            };
-            const onClose = (code: number | null) => {
-                cleanup();
-                reject(new Error(`Dart parser process closed (${code ?? '?'})`));
-            };
+function extractCalls(node: any, callsArr: JavaCallSite[], currentMethod: string) {
+    if (!node || typeof node !== 'object') return;
+    
+    if (node.name === 'primary') {
+        const prefix = node.children?.primaryPrefix?.[0];
+        const suffixes = node.children?.primarySuffix || [];
+        
+        const currentTargetParts: string[] = [];
+        if (prefix) {
+            const ids = extractAllIdentifiers(prefix);
+            currentTargetParts.push(...ids);
+        }
+        
+        for (const suffix of suffixes) {
+            if (suffix.children?.methodInvocationSuffix) {
+                if (currentTargetParts.length > 0) {
+                    const methodName = currentTargetParts.pop() as string;
+                    const objectName = currentTargetParts.join('.');
+                    currentTargetParts.push(methodName + '()');
+                    callsArr.push({
+                        from: currentMethod,
+                        to: methodName,
+                        objectName: objectName || undefined,
+                        args: []
+                    });
+                }
+            } else if (suffix.children?.Identifier) {
+                currentTargetParts.push(suffix.children.Identifier[0].image);
+            }
+        }
+    }
+    
+    if (node.children) {
+        for (const key of Object.keys(node.children)) {
+            const arr = node.children[key];
+            if (Array.isArray(arr)) {
+                for (const child of arr) extractCalls(child, callsArr, currentMethod);
+            }
+        }
+    }
+}
 
-            const cleanup = () => {
-                rl.removeListener('line', onLine);
-                child.removeListener('close', onClose);
-            };
-
-            rl.once('line', onLine);
-            child.once('close', onClose);
-        });
+export async function parseJavaFile(filePath: string): Promise<ParseResult> {
+    const content = await fs.promises.readFile(filePath, 'utf-8');
+    let ast: any;
+    try {
+        ast = parse(content);
+    } catch (e: any) {
+        throw new JavaParseUserError(e.message || 'Java parse failed');
     }
 
-    private async parseViaServer(filePath: string): Promise<DartParseResult> {
-        await this.ensureServer();
+    const classes: JavaClass[] = [];
+    const functions: string[] = [];
+    const functionDefs: JavaFunctionDef[] = [];
+    const variables: string[] = [];
+    const imports: string[] = [];
+    const calls: JavaCallSite[] = [];
 
-        const child = this.child;
-        if (!child?.stdin) {
-            throw new Error('Dart parser stdin unavailable');
+    traverse(ast, {
+        importDeclaration: (node: any) => {
+            const ids = extractAllIdentifiers(node);
+            if (ids.length) imports.push(ids.join('.'));
+        },
+        classDeclaration: (cNode: any) => {
+            const normalClass = cNode.children?.normalClassDeclaration?.[0];
+            const className = (normalClass ? extractIdentifier(normalClass) : extractIdentifier(cNode)) || 'UnknownClass';
+            const clsAnnotations = extractAnnotations(cNode.children?.classModifier || cNode);
+            
+            const methods: string[] = [];
+            const fields: string[] = [];
+
+            traverse(cNode, {
+                fieldDeclaration: (fNode: any) => {
+                    const fieldName = extractIdentifier(fNode.children?.variableDeclaratorList?.[0]);
+                    if (fieldName) fields.push(fieldName);
+                },
+                methodDeclaration: (mNode: any) => {
+                    const methodName = extractIdentifier(mNode.children?.methodHeader?.[0]?.children?.methodDeclarator?.[0]);
+                    if (!methodName) return;
+                    methods.push(methodName);
+
+                    const methodAnns = extractAnnotations(mNode.children?.methodModifier || mNode.children?.methodHeader?.[0]);
+                    
+                    const params: Array<{ name: string; type: string }> = [];
+                    // Extract params roughly
+                    traverse(mNode.children?.methodHeader?.[0]?.children?.methodDeclarator?.[0], {
+                        formalParameter: (pNode: any) => {
+                            const pName = extractIdentifier(pNode.children?.variableDeclaratorId?.[0]);
+                            const pType = extractIdentifier(pNode.children?.unannType?.[0]);
+                            if (pName && pType) params.push({ name: pName, type: pType });
+                        }
+                    });
+
+                    functionDefs.push({
+                        name: `${className}.${methodName}`,
+                        params,
+                        annotations: methodAnns
+                    });
+
+                    const fullMethodName = `${className}.${methodName}`;
+                    functions.push(fullMethodName);
+
+                    // Find method invocations inside this method
+                    extractCalls(mNode.children?.methodBody?.[0], calls, fullMethodName);
+                }
+            });
+
+            classes.push({
+                name: className,
+                methods,
+                fields,
+                annotations: clsAnnotations
+            });
         }
+    });
 
-        child.stdin.write(`${JSON.stringify({ path: filePath })}\n`);
-
-        const line = await this.readResponseLine();
-        let msg: ServerResponse;
-        try {
-            msg = JSON.parse(line) as ServerResponse;
-        } catch {
-            throw new Error('Invalid JSON from Dart parser server');
-        }
-
-        if (!msg.ok) {
-            throw new DartParseUserError(msg.error ?? 'Dart parse failed');
-        }
-
-        return msg.result;
-    }
-
-    private parseViaOneShot(filePath: string): DartParseResult {
-        const scriptPath = path.join(this.extensionRootPath, 'parser.dart');
-        const output = execFileSync('dart', [scriptPath, filePath], {
-            encoding: 'utf8',
-            maxBuffer: 10 * 1024 * 1024,
-        });
-        return JSON.parse(output) as DartParseResult;
-    }
+    return {
+        file: filePath,
+        classes,
+        functions,
+        functionDefs,
+        variables,
+        imports,
+        calls
+    };
 }

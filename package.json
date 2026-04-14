@@ -1,47 +1,53 @@
 {
   "name": "thirdeye",
-  "displayName": "thirdEye",
-  "description": "",
+  "displayName": "ThirdEye - Java Execution Visualizer",
+  "description": "Visualize Java execution flow as an interactive tree directly inside VS Code.",
   "version": "0.0.1",
+  "publisher": "shivam-dev",
+
   "engines": {
-    "vscode": "^1.115.0"
+    "vscode": "^1.85.0"
   },
-  "categories": [
-    "Other"
-  ],
+
+  "categories": ["Other"],
+
   "activationEvents": [
-  "onStartupFinished"
-],
+    "onLanguage:java"
+  ],
+
   "main": "./out/extension.js",
+
   "contributes": {
     "commands": [
       {
-        "command": "thirdeye.helloWorld",
-        "title": "Hello World"
+        "command": "thirdeye.openGraph",
+        "title": "ThirdEye: Show Execution Tree"
       }
     ]
   },
+
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile && npm run lint",
-    "lint": "eslint src",
-    "test": "vscode-test"
+    "lint": "eslint src"
   },
+
   "devDependencies": {
     "@types/babel__traverse": "^7.28.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "^22.19.17",
-    "@types/vscode": "^1.115.0",
+    "@types/vscode": "^1.85.0",
     "@vscode/test-cli": "^0.0.11",
     "@vscode/test-electron": "^2.5.2",
     "eslint": "^9.39.3",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.56.1"
   },
+
   "dependencies": {
     "@babel/parser": "^7.29.2",
-    "@babel/traverse": "^7.29.0"
+    "@babel/traverse": "^7.29.0",
+    "java-parser": "^3.0.1"
   }
 }
